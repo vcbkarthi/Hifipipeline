@@ -1,0 +1,84 @@
+{
+  "logo_path": "assets/logo.png",
+  "logo_position": "top-right",
+  "logo_opacity": 0.85,
+  "logo_scale": 0.12,
+
+  "lut_path": "",
+
+  "shorts": {
+    "min_seconds": 10,
+    "max_seconds": 30,
+    "max_per_clip": 2,
+    "hook_reorder": true
+  },
+
+  "longform": {
+    "target_seconds": 180,
+    "crossfade_seconds": 1.0,
+    "lower_third": true
+  },
+
+  "scoring_weights": {
+    "motion": 0.40,
+    "warmth": 0.30,
+    "sharpness": 0.30
+  },
+
+  "brand_dictionary": [
+    "Focal", "Wilson Audio", "Wilson Benesch", "Magico", "YG Acoustics",
+    "Sonus Faber", "B&W", "Bowers & Wilkins", "KEF", "Tannoy", "Harbeth",
+    "ProAc", "Spendor", "Dynaudio", "Klipsch", "JBL", "Revel",
+    "Meridian", "Naim", "Linn", "McIntosh", "Pass Labs", "Luxman",
+    "Accuphase", "Marantz", "Denon", "Rotel", "Musical Fidelity",
+    "Chord Electronics", "dCS", "Esoteric", "Aurender", "Roon",
+    "AudioQuest", "Nordost", "Transparent Audio", "Kimber Kable",
+    "Rega", "Pro-Ject", "Technics", "VPI", "Clearaudio"
+  ],
+
+  "youtube_tags_base": [
+    "hifi", "audiophile", "hifishow", "speakers", "amplifier",
+    "highendaudio", "soundsystem", "audioshow"
+  ],
+
+  "signal_tags": {
+    "motion": ["wooferporn", "woofer", "bass"],
+    "warmth": ["tubeamp", "vacuumtube", "tubeaudio", "glowing"],
+    "sharpness": ["speakerdetail", "audioart", "hificraftsmanship"]
+  },
+
+  "output": {
+    "shorts_dir": "output/shorts",
+    "longform_dir": "output/longform",
+    "transcripts_dir": "output/transcripts",
+    "manifest_dir": "output/manifests",
+    "frames_dir": "output/frames"
+  },
+
+  "encoding": {
+    "video_codec": "hevc_videotoolbox",
+    "audio_codec": "aac",
+    "audio_bitrate": "320k",
+    "video_bitrate": "40000k",
+    "short_resolution": "2160x3840",
+    "longform_resolution": "2160x3840",
+    "pixel_format": "yuv420p",
+    "colorspace": "bt2020nc",
+    "color_primaries": "bt2020",
+    "color_trc": "arib-std-b67"
+  },
+
+  "grade": {
+    "enabled": true,
+    "saturation": 1.35,
+    "contrast": 1.12,
+    "brightness": 0.03,
+    "gamma": 0.92,
+    "shadows_r": 0.02,
+    "shadows_b": -0.03,
+    "highlights_r": -0.01,
+    "highlights_b": 0.02,
+    "sharpen_luma": 0.9,
+    "sharpen_chroma": 0.3
+  }
+}

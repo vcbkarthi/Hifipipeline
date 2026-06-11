@@ -1,0 +1,13 @@
+# Credentials — never commit
+credentials/client_secret.json
+credentials/token.json
+
+# Output — large files, not code
+output/
+__pycache__/
+*.pyc
+*.pyo
+.DS_Store
+
+# Frames cache
+frames/
