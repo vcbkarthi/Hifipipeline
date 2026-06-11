@@ -23,7 +23,6 @@ os.environ["PATH"] = "/opt/homebrew/bin:/usr/local/bin:" + os.environ.get("PATH"
 
 from rich.console import Console
 from rich.table import Table
-from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, TimeElapsedColumn
 
 from ingest import scan_folder
 from brand import detect_brand, build_output_name
@@ -35,6 +34,7 @@ console = Console()
 
 # Global stop flag — set by SIGTERM or --stop signal
 _stop = threading.Event()
+_skip_brand = False
 
 
 def _handle_sigterm(sig, frame):
@@ -70,7 +70,8 @@ def process_clip(clip, show_name: str, cfg: dict, base: Path) -> tuple:
     log_lines = []
 
     # Brand detection
-    brand, product, confidence = detect_brand(clip, frames_dir, cfg["brand_dictionary"])
+    brand, product, confidence = detect_brand(clip, frames_dir, cfg["brand_dictionary"]) \
+        if not _skip_brand else (None, None, 0.0)
     clip.brand = brand
     log_lines.append(
         f"  {clip.path.name} → {brand or 'Unknown'}"
@@ -124,7 +125,11 @@ def process_clip(clip, show_name: str, cfg: dict, base: Path) -> tuple:
 
 
 def run(input_dir: str, show_name: str, order: Optional[List[str]],
-        config_path: str, workers: int = 2):
+        config_path: str, workers: int = 2, orientation: str = "all",
+        skip_brand: bool = False):
+    global _skip_brand
+    _skip_brand = skip_brand
+
     cfg = load_config(config_path)
     base = Path(".")
     setup_output_dirs(cfg, base)
@@ -144,6 +149,22 @@ def run(input_dir: str, show_name: str, order: Optional[List[str]],
         console.print("[dim]Supported formats: .mp4 .mov .MP4 .MOV .m4v[/dim]")
         return
 
+    # Orientation filter
+    if orientation in ("landscape", "portrait"):
+        before = len(clips)
+        if orientation == "landscape":
+            clips = [c for c in clips if c.width >= c.height]
+        else:
+            clips = [c for c in clips if c.height > c.width]
+        skipped = before - len(clips)
+        console.print(
+            f"  Orientation filter: [cyan]{orientation}[/cyan] — "
+            f"kept {len(clips)}, skipped {skipped}"
+        )
+        if not clips:
+            console.print("[red]No clips match the orientation filter.[/red]")
+            return
+
     console.print(f"  Found [cyan]{len(clips)}[/cyan] clips — processing {workers} at a time")
 
     manifest_entries = []
@@ -151,40 +172,34 @@ def run(input_dir: str, show_name: str, order: Optional[List[str]],
     lock = threading.Lock()
 
     # ── 2-4. Concurrent per-clip processing ───────────────────────────────────
+    total = len(clips)
+    done  = 0
     console.print(f"\n[bold]Steps 2–3/4[/bold] Brand detect + score + cut shorts...")
+    console.print(f"── Progress: 0 / {total} clips done ──")
 
-    with Progress(
-        SpinnerColumn(),
-        TextColumn("[progress.description]{task.description}"),
-        BarColumn(),
-        TextColumn("{task.completed}/{task.total}"),
-        TimeElapsedColumn(),
-        console=console,
-    ) as progress:
-        task = progress.add_task("Processing...", total=len(clips))
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        futures = {
+            pool.submit(process_clip, clip, show_name, cfg, base): clip
+            for clip in clips
+        }
 
-        with ThreadPoolExecutor(max_workers=workers) as pool:
-            futures = {
-                pool.submit(process_clip, clip, show_name, cfg, base): clip
-                for clip in clips
-            }
+        for future in as_completed(futures):
+            if _stop.is_set():
+                for f in futures:
+                    f.cancel()
+                break
 
-            for future in as_completed(futures):
-                if _stop.is_set():
-                    # Cancel remaining futures
-                    for f in futures:
-                        f.cancel()
-                    break
+            clip, entries, log = future.result()
+            console.print(log)
 
-                clip, entries, log = future.result()
-                console.print(log)
+            with lock:
+                manifest_entries.extend(entries)
+                if entries:
+                    processed_clips.append(clip)
+                done += 1
 
-                with lock:
-                    manifest_entries.extend(entries)
-                    if entries:
-                        processed_clips.append(clip)
-
-                progress.advance(task)
+            pct = int(done / total * 100)
+            console.print(f"── Progress: {done} / {total} clips done ({pct}%) ──")
 
     if _stop.is_set():
         console.print("[yellow]Pipeline stopped by user.[/yellow]")
@@ -240,12 +255,15 @@ def main():
     parser.add_argument("--input",   required=True)
     parser.add_argument("--show",    required=True)
     parser.add_argument("--order",   default="")
-    parser.add_argument("--workers", type=int, default=2)
-    parser.add_argument("--config",  default="config.json")
+    parser.add_argument("--workers",     type=int, default=2)
+    parser.add_argument("--orientation", default="all", choices=["all", "landscape", "portrait"])
+    parser.add_argument("--skip-brand",  action="store_true")
+    parser.add_argument("--config",      default="config.json")
     args = parser.parse_args()
 
     order = [b.strip() for b in args.order.split(",") if b.strip()] if args.order else None
-    run(args.input, args.show, order, args.config, workers=args.workers)
+    run(args.input, args.show, order, args.config, workers=args.workers,
+        orientation=args.orientation, skip_brand=args.skip_brand)
 
 
 if __name__ == "__main__":

@@ -8,7 +8,7 @@ import numpy as np
 from ingest import Clip
 
 
-SAMPLE_INTERVAL = 0.5  # seconds between scored frames
+SAMPLE_INTERVAL = 1.5  # seconds between scored frames
 
 
 @dataclass
@@ -22,21 +22,25 @@ class ScoredWindow:
 
 def _extract_frames_opencv(video_path: Path, interval: float) -> list[tuple[float, np.ndarray]]:
     cap = cv2.VideoCapture(str(video_path))
+    if not cap.isOpened():
+        return []
     fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
     total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
     duration = total_frames / fps
-    step = max(1, int(fps * interval))
+
+    # Seek directly to each sample timestamp — avoids decoding every frame
+    timestamps = []
+    t = 0.0
+    while t < duration:
+        timestamps.append(t)
+        t += interval
 
     frames = []
-    frame_idx = 0
-    while True:
+    for ts in timestamps:
+        cap.set(cv2.CAP_PROP_POS_MSEC, ts * 1000)
         ret, frame = cap.read()
-        if not ret:
-            break
-        if frame_idx % step == 0:
-            ts = frame_idx / fps
+        if ret:
             frames.append((ts, frame))
-        frame_idx += 1
 
     cap.release()
     return frames
@@ -56,28 +60,27 @@ def _motion_score(prev: np.ndarray, curr: np.ndarray) -> float:
 
 
 def _warmth_score(frame: np.ndarray) -> float:
-    """Detect warm amber/orange blobs — tube glow, glowing filaments."""
+    """Detect warm tones — tube glow, wood cabinets, warm show lighting."""
     hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
-    # Amber/orange hue range in HSV
-    lower = np.array([10, 120, 100])
-    upper = np.array([30, 255, 255])
+    # Broader warm range: amber, orange, warm-red, golden-yellow
+    lower = np.array([5, 60, 80])
+    upper = np.array([35, 255, 255])
     mask = cv2.inRange(hsv, lower, upper)
     warm_ratio = np.sum(mask > 0) / mask.size
-    # Bonus: concentrated blobs (not diffuse) score higher
     contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-    blob_bonus = min(len(contours) * 0.02, 0.2)
-    return min(warm_ratio * 3.0 + blob_bonus, 1.0)
+    blob_bonus = min(len(contours) * 0.01, 0.15)
+    # Calibrated for 4K: raw ratios are ~0.01-0.03, scale up to 0-1 range
+    return min(warm_ratio * 15.0 + blob_bonus, 1.0)
 
 
 def _sharpness_score(frame: np.ndarray) -> float:
     """Laplacian variance — high = lots of fine detail in focus (driver texture, grille)."""
     gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-    # Focus on center region
     h, w = gray.shape
     roi = gray[h // 4: 3 * h // 4, w // 4: 3 * w // 4]
     lap_var = cv2.Laplacian(roi, cv2.CV_64F).var()
-    # Normalise for indoor compressed footage — typical range 0–400
-    return min(lap_var / 400.0, 1.0)
+    # Calibrated for 4K MOV: typical indoor range 3–15, scale to 0–1
+    return min(lap_var / 12.0, 1.0)
 
 
 def score_clip(clip: Clip, weights: dict) -> list[tuple[float, float, str]]:

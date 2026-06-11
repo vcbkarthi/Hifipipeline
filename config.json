@@ -20,9 +20,9 @@
   },
 
   "scoring_weights": {
-    "motion": 0.40,
-    "warmth": 0.30,
-    "sharpness": 0.30
+    "motion": 0.20,
+    "warmth": 0.35,
+    "sharpness": 0.45
   },
 
   "brand_dictionary": [

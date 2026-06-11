@@ -78,6 +78,20 @@ def get_entry(entry_id: str):
     return None
 
 
+def delete_entry(entry_id: str):
+    e = get_entry(entry_id)
+    if not e:
+        return
+    path = Path(e["_manifest"])
+    idx  = e["_index"]
+    with open(path) as f:
+        data = json.load(f)
+    if 0 <= idx < len(data):
+        data.pop(idx)
+    with open(path, "w") as f:
+        json.dump(data, f, indent=2)
+
+
 def thumbnail_for(entry: dict) -> str:
     video = Path(entry.get("file", ""))
     if not video.exists():
@@ -115,10 +129,12 @@ def api_pipeline_run():
         return jsonify({"ok": False, "error": "Pipeline already running"}), 400
 
     data = request.json or {}
-    source  = data.get("source", "").strip()
-    output  = data.get("output", "").strip()
-    show    = data.get("show", "").strip()
-    order   = data.get("order", "").strip()
+    source      = data.get("source", "").strip()
+    output      = data.get("output", "").strip()
+    show        = data.get("show", "").strip()
+    order       = data.get("order", "").strip()
+    orientation  = data.get("orientation", "all").strip()
+    skip_brand   = data.get("skip_brand", True)
 
     if not source or not Path(source).exists():
         return jsonify({"ok": False, "error": "Source folder not found"}), 400
@@ -137,7 +153,10 @@ def api_pipeline_run():
                 "--input", source,
                 "--show", show,
                 "--workers", str(workers),
+                "--orientation", orientation,
             ]
+            if skip_brand:
+                cmd += ["--skip-brand"]
             if order:
                 cmd += ["--order", order]
             if output:
@@ -336,6 +355,24 @@ def api_settings_clear():
     p = Path("credentials/client_secret.json")
     if p.exists():
         p.unlink()
+    return jsonify({"ok": True})
+
+
+@app.route("/api/entry/delete/<entry_id>", methods=["POST"])
+def api_entry_delete(entry_id):
+    e = get_entry(entry_id)
+    if not e:
+        return jsonify({"ok": False, "error": "Not found"}), 404
+    # Delete the generated output file (never touches source)
+    for key in ("file", "done_path"):
+        val = e.get(key, "")
+        if not val:
+            continue
+        p = Path(val)
+        if p.exists() and p.is_file():
+            p.unlink()
+    # Remove from manifest
+    delete_entry(entry_id)
     return jsonify({"ok": True})
 
 
@@ -615,6 +652,21 @@ body { background:var(--bg); color:var(--text); font-family:-apple-system,BlinkM
         <input type="text" id="room-order" placeholder="e.g. Focal, Wilson Audio, KEF, McIntosh">
       </div>
       <div style="display:flex;gap:8px;align-items:center">
+        <label style="font-size:11px;color:var(--muted)">
+          <input type="checkbox" id="skip-brand" checked style="margin-right:4px">
+          Skip brand detection (faster)
+        </label>
+      </div>
+      <div style="display:flex;gap:8px;align-items:center">
+        <label style="font-size:11px;color:var(--muted)">Orientation:</label>
+        <select id="orientation-select" style="background:var(--surface2);border:1px solid var(--border);
+          color:var(--text);border-radius:6px;padding:6px 10px;font-size:13px;">
+          <option value="all" selected>All clips</option>
+          <option value="landscape">Landscape only (16:9)</option>
+          <option value="portrait">Portrait only (9:16)</option>
+        </select>
+      </div>
+      <div style="display:flex;gap:8px;align-items:center">
         <label style="font-size:11px;color:var(--muted)">Workers:</label>
         <select id="workers-select" style="background:var(--surface2);border:1px solid var(--border);
           color:var(--text);border-radius:6px;padding:6px 10px;font-size:13px;">
@@ -754,8 +806,10 @@ async function runPipeline() {
   if (!source) { toast('Select a source folder first', 'err'); return; }
   if (!show)   { toast('Enter a show name', 'err'); return; }
 
-  const workers = document.getElementById('workers-select').value;
-  const btn     = document.getElementById('btn-run');
+  const workers     = document.getElementById('workers-select').value;
+  const orientation = document.getElementById('orientation-select').value;
+  const skip_brand  = document.getElementById('skip-brand').checked;
+  const btn         = document.getElementById('btn-run');
   const btnStop = document.getElementById('btn-stop');
   btn.disabled = true;
   btn.textContent = '⏳ Running…';
@@ -766,7 +820,7 @@ async function runPipeline() {
 
   const res = await fetch('/api/pipeline/run', {
     method:'POST', headers:{'Content-Type':'application/json'},
-    body: JSON.stringify({source, output, show, order, workers: parseInt(workers)})
+    body: JSON.stringify({source, output, show, order, workers: parseInt(workers), orientation, skip_brand})
   });
   const data = await res.json();
   if (!data.ok) {
@@ -850,10 +904,17 @@ function cardHTML(e) {
       </div>
       <span style="font-size:10px;color:${scoreColor};font-weight:600">${scorePct}</span>
     </div>` : '';
+  const delBtn = e.status !== 'uploaded'
+    ? `<button onclick="event.stopPropagation();deleteEntry('${e.id}')"
+        title="Delete"
+        style="position:absolute;top:6px;right:6px;background:#0008;border:none;color:#fff;
+        border-radius:50%;width:24px;height:24px;font-size:13px;cursor:pointer;line-height:24px;
+        text-align:center;padding:0">✕</button>` : '';
   return `
-    <div class="card ${e.id===selectedId?'selected':''}" data-id="${e.id}">
+    <div class="card ${e.id===selectedId?'selected':''}" data-id="${e.id}" style="position:relative">
       <div class="card-thumb">${thumb}${badge}
         <div class="status-dot ${dot}"></div>
+        ${delBtn}
       </div>
       <div class="card-body">
         <div class="card-title">${e.title||'—'}</div>
@@ -929,6 +990,9 @@ function renderDetail(e) {
       </div>
       ${uploadBtn}
       ${ytLink}
+      ${e.status !== 'uploaded' ? `<button class="btn" onclick="deleteEntry('${e.id}')"
+        style="background:transparent;border:1px solid var(--red);color:var(--red);margin-top:6px">
+        🗑 Delete</button>` : ''}
     </div>`;
 }
 
@@ -938,6 +1002,17 @@ async function setBrand(id, brand) {
   // Update local entry so card reflects change without full reload
   const e = entries.find(x => x.id === id);
   if (e) { e.brand = brand; renderGrid(); }
+}
+
+async function deleteEntry(id) {
+  if (!confirm('Delete this clip? The output file will be removed (source footage is never touched).')) return;
+  const r = await fetch(`/api/entry/delete/${id}`, {method:'POST'});
+  if ((await r.json()).ok) {
+    toast('Deleted','ok');
+    selectedId = null;
+    document.getElementById('detail').innerHTML = '<div class="empty-detail"><span>Select a video to review</span></div>';
+    await loadEntries();
+  }
 }
 
 async function approve(id) {
